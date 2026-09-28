@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import '../../../core/constants/app_colors.dart';
-import '../../../core/utils/geo_utils.dart';
+import '../../../core/widgets/velix_map.dart';
 import '../controllers/passenger_controller.dart';
 import '../../auth/controllers/auth_controller.dart';
 import '../../profile/screens/profile_screen.dart';
@@ -19,24 +19,14 @@ class PassengerHomeScreen extends StatefulWidget {
 }
 
 class _PassengerHomeScreenState extends State<PassengerHomeScreen> {
-  GoogleMapController? _mapController;
-
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final auth = Provider.of<AuthController>(context, listen: false);
       final passenger = Provider.of<PassengerController>(context, listen: false);
-      passenger.initialize(auth.currentUser?.id ?? 'mock-passenger-1');
+      passenger.initialize(auth.currentUser?.id ?? '00000000-0000-0000-0000-000000000001');
     });
-  }
-
-  void _recenterMap(LatLng target) {
-    _mapController?.animateCamera(
-      CameraUpdate.newCameraPosition(
-        CameraPosition(target: target, zoom: 15),
-      ),
-    );
   }
 
   @override
@@ -44,45 +34,47 @@ class _PassengerHomeScreenState extends State<PassengerHomeScreen> {
     final passenger = Provider.of<PassengerController>(context);
     final auth = Provider.of<AuthController>(context);
 
-    // Carros simulados próximos
-    final nearbyCars = GeoUtils.getNearbySimulatedDrivers(passenger.currentLocation);
-    final Set<Marker> markers = {};
+    // Marcadores Reais (Passageiro GPS + Motoristas Online no Supabase)
+    final markers = <VelixMapMarker>[];
 
+    // 1. Posição GPS Real do Passageiro
     markers.add(
-      Marker(
-        markerId: const MarkerId('current_pos'),
-        position: passenger.currentLocation,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-        infoWindow: const InfoWindow(title: 'Sua Localização Atual'),
+      VelixMapMarker(
+        point: passenger.currentLocation,
+        child: const PassengerLocationMarker(),
       ),
     );
 
-    for (int i = 0; i < nearbyCars.length; i++) {
-      markers.add(
-        Marker(
-          markerId: MarkerId('car_$i'),
-          position: nearbyCars[i],
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-          infoWindow: InfoWindow(title: 'Velix Parceiro #$i'),
-        ),
-      );
+    // 2. Motoristas Reais Online
+    for (final driverData in passenger.onlineDrivers) {
+      final lat = (driverData['latitude'] as num?)?.toDouble();
+      final lng = (driverData['longitude'] as num?)?.toDouble();
+      final heading = (driverData['heading'] as num?)?.toDouble() ?? 0.0;
+      if (lat != null && lng != null) {
+        markers.add(
+          VelixMapMarker(
+            point: LatLng(lat, lng),
+            child: DriverVehicleMarker(
+              vehicleType: driverData['vehicle_type'] ?? 'car',
+              label: driverData['full_name'] ?? 'Motorista Parceiro',
+              heading: heading,
+            ),
+          ),
+        );
+      }
     }
 
     return Scaffold(
       drawer: _buildDrawer(context, auth, passenger),
       body: Stack(
         children: [
-          // Google Maps
-          GoogleMap(
-            initialCameraPosition: CameraPosition(
-              target: passenger.currentLocation,
-              zoom: 15,
-            ),
+          // Velix Map (OpenStreetMap / CartoDB Voyager em tempo real)
+          VelixMap(
+            center: passenger.currentLocation,
+            initialZoom: 15.5,
             markers: markers,
-            myLocationEnabled: true,
-            myLocationButtonEnabled: false,
-            zoomControlsEnabled: false,
-            onMapCreated: (ctrl) => _mapController = ctrl,
+            showRecenterButton: true,
+            padding: const EdgeInsets.only(bottom: 240),
           ),
 
           // Barra Superior com Menu e Botão de Alternar Perfil
@@ -140,18 +132,6 @@ class _PassengerHomeScreenState extends State<PassengerHomeScreen> {
             ),
           ),
 
-          // Botão Centralizar GPS
-          Positioned(
-            right: 16,
-            bottom: 240,
-            child: FloatingActionButton.small(
-              backgroundColor: Colors.white,
-              foregroundColor: AppColors.black,
-              elevation: 4,
-              onPressed: () => _recenterMap(passenger.currentLocation),
-              child: const Icon(Icons.my_location),
-            ),
-          ),
 
           // Se houver corrida ativa, exibe banner flutuante
           if (passenger.activeRide != null)
@@ -331,23 +311,32 @@ class _PassengerHomeScreenState extends State<PassengerHomeScreen> {
   }
 
   Widget _buildDrawer(BuildContext context, AuthController auth, PassengerController passenger) {
+    final avatar = auth.currentUser?.avatarUrl;
+    final name = auth.currentUser?.fullName.isNotEmpty == true ? auth.currentUser!.fullName : 'Passageiro Velix';
+    final initial = name.isNotEmpty ? name[0].toUpperCase() : 'P';
+
     return Drawer(
       backgroundColor: Colors.white,
       child: Column(
         children: [
           UserAccountsDrawerHeader(
             decoration: const BoxDecoration(color: AppColors.black),
-            currentAccountPicture: const CircleAvatar(
-              backgroundImage: NetworkImage(
-                'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-              ),
+            currentAccountPicture: CircleAvatar(
+              backgroundColor: AppColors.blue,
+              backgroundImage: (avatar != null && avatar.isNotEmpty) ? NetworkImage(avatar) : null,
+              child: (avatar == null || avatar.isEmpty)
+                  ? Text(
+                      initial,
+                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.white),
+                    )
+                  : null,
             ),
             accountName: Text(
-              auth.currentUser?.fullName ?? 'Carlos Mendes',
+              name,
               style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
             ),
             accountEmail: Text(
-              auth.currentUser?.email ?? 'carlos@velixgo.com.br',
+              auth.currentUser?.email ?? '',
               style: const TextStyle(color: AppColors.greyLight, fontSize: 13),
             ),
           ),

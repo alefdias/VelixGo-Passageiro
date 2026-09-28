@@ -29,9 +29,15 @@ class ProfileScreen extends StatelessWidget {
                 CircleAvatar(
                   radius: 46,
                   backgroundColor: AppColors.surfaceLight,
-                  backgroundImage: NetworkImage(
-                    user?.avatarUrl ?? 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-                  ),
+                  backgroundImage: (user?.avatarUrl != null && user!.avatarUrl!.isNotEmpty)
+                      ? NetworkImage(user.avatarUrl!)
+                      : null,
+                  child: (user?.avatarUrl == null || user!.avatarUrl!.isEmpty)
+                      ? Text(
+                          (user?.fullName.isNotEmpty == true ? user!.fullName[0] : 'P').toUpperCase(),
+                          style: const TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: AppColors.blue),
+                        )
+                      : null,
                 ),
                 Positioned(
                   bottom: 0,
@@ -51,13 +57,13 @@ class ProfileScreen extends StatelessWidget {
           const SizedBox(height: 16),
           Center(
             child: Text(
-              user?.fullName ?? 'Carlos Mendes',
+              user?.fullName.isNotEmpty == true ? user!.fullName : 'Passageiro Velix',
               style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w800, color: AppColors.black),
             ),
           ),
           Center(
             child: Text(
-              user?.email ?? 'carlos@velixgo.com.br',
+              user?.email ?? '',
               style: const TextStyle(fontSize: 14, color: AppColors.grey),
             ),
           ),

@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/constants/app_colors.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/utils/geo_utils.dart';
+import '../../../core/widgets/velix_map.dart';
 import '../controllers/passenger_controller.dart';
 import '../../auth/controllers/auth_controller.dart';
 import 'rating_dialog.dart';
@@ -17,8 +18,6 @@ class ActiveRideScreen extends StatefulWidget {
 }
 
 class _ActiveRideScreenState extends State<ActiveRideScreen> {
-  GoogleMapController? _mapController;
-
   void _callDriver(String? phone) async {
     if (phone == null || phone.isEmpty) return;
     final cleanPhone = phone.replaceAll(RegExp(r'[^0-9]'), '');
@@ -54,7 +53,7 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
         isAlreadyFavorite: isFav,
         onSubmit: (score, comment, addToFavorites) async {
           await passenger.submitRatingAndFinish(
-            passengerId: auth.currentUser?.id ?? 'mock-passenger-1',
+            passengerId: auth.currentUser?.id ?? '00000000-0000-0000-0000-000000000001',
             score: score,
             comment: comment,
             addToFavorites: addToFavorites,
@@ -77,8 +76,7 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
       WidgetsBinding.instance.addPostFrameCallback((_) => _showRatingModal());
     }
 
-    final Set<Marker> markers = {};
-    final Set<Polyline> polylines = {};
+    final markers = <VelixMapMarker>[];
 
     final origin = LatLng(
       ride?.originLat ?? passenger.currentLocation.latitude,
@@ -89,66 +87,57 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
       ride?.destinationLng ?? (passenger.destinationLocation?.longitude ?? origin.longitude + 0.02),
     );
 
+    // Marcador de Origem (Onde o passageiro está)
     markers.add(
-      Marker(
-        markerId: const MarkerId('origin'),
-        position: origin,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueGreen),
-        infoWindow: const InfoWindow(title: 'Ponto de Partida'),
+      VelixMapMarker(
+        point: origin,
+        child: const PassengerLocationMarker(),
       ),
     );
 
+    // Marcador de Destino
     markers.add(
-      Marker(
-        markerId: const MarkerId('destination'),
-        position: destination,
-        icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueRed),
-        infoWindow: const InfoWindow(title: 'Destino Final'),
+      VelixMapMarker(
+        point: destination,
+        child: const DestinationMarker(title: 'Destino'),
       ),
     );
 
-    // Se aceito, adiciona pino do motorista a caminho
+    // Posição REAL do Motorista (Streaming do Supabase)
+    LatLng? driverPos;
     if (ride != null && !ride.isRequested) {
-      final driverPos = LatLng(
-        origin.latitude + 0.005,
-        origin.longitude + 0.004,
-      );
+      driverPos = passenger.assignedDriverLocation ?? LatLng(origin.latitude + 0.003, origin.longitude + 0.002);
       markers.add(
-        Marker(
-          markerId: const MarkerId('driver'),
-          position: driverPos,
-          icon: BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueAzure),
-          infoWindow: InfoWindow(title: ride.driverName ?? 'Motorista Velix'),
+        VelixMapMarker(
+          point: driverPos,
+          child: DriverVehicleMarker(
+            vehicleType: ride.vehicleType,
+            label: ride.driverName ?? 'Motorista Parceiro',
+          ),
         ),
       );
     }
 
-    final polylineCoords = GeoUtils.createRoutePolyline(origin, destination);
-    polylines.add(
-      Polyline(
-        polylineId: const PolylineId('route'),
-        points: polylineCoords,
-        color: AppColors.blue,
-        width: 5,
-      ),
-    );
+    // Traça rota: Se motorista a caminho, traça motorista -> passageiro. Se em viagem, traça passageiro -> destino
+    List<LatLng>? routePoints;
+    if (driverPos != null && (ride?.status == 'accepted' || ride?.status == 'arrived')) {
+      routePoints = GeoUtils.createRoutePolyline(driverPos, origin);
+    } else {
+      routePoints = GeoUtils.createRoutePolyline(origin, destination);
+    }
 
     return Scaffold(
       backgroundColor: Colors.white,
       body: Stack(
         children: [
-          // Mapa
-          GoogleMap(
-            initialCameraPosition: CameraPosition(
-              target: origin,
-              zoom: 14.5,
-            ),
+          // Velix Map
+          VelixMap(
+            center: driverPos ?? origin,
+            initialZoom: 15.0,
             markers: markers,
-            polylines: polylines,
-            myLocationEnabled: true,
-            myLocationButtonEnabled: false,
-            zoomControlsEnabled: false,
-            onMapCreated: (ctrl) => _mapController = ctrl,
+            routePoints: routePoints,
+            showRecenterButton: true,
+            padding: const EdgeInsets.only(bottom: 300),
           ),
 
           // Botão Superior Voltar / Cancelar
@@ -190,24 +179,6 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
             ),
           ),
 
-          // Botão Recentralizar Mapa
-          Positioned(
-            right: 16,
-            bottom: 270,
-            child: FloatingActionButton.small(
-              backgroundColor: Colors.white,
-              foregroundColor: AppColors.black,
-              elevation: 4,
-              onPressed: () {
-                _mapController?.animateCamera(
-                  CameraUpdate.newCameraPosition(
-                    CameraPosition(target: origin, zoom: 14.5),
-                  ),
-                );
-              },
-              child: const Icon(Icons.my_location),
-            ),
-          ),
 
           // Painel Inferior Deslizante com Informações da Corrida
           Align(

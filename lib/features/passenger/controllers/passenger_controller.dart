@@ -1,9 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:latlong2/latlong.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../core/models/ride_model.dart';
-import '../../../core/models/driver_model.dart';
 import '../../../core/services/location_service.dart';
 import '../../../core/services/supabase_service.dart';
 import '../../../core/utils/geo_utils.dart';
@@ -12,7 +12,7 @@ class PassengerController extends ChangeNotifier {
   final SupabaseService _supabaseService = SupabaseService();
 
   LatLng _currentLocation = const LatLng(AppConstants.defaultLat, AppConstants.defaultLng);
-  String _originAddress = 'Av. Paulista, 1578 - Bela Vista';
+  String _originAddress = 'Minha Localização Atual';
   
   String? _destinationAddress;
   LatLng? _destinationLocation;
@@ -35,6 +35,12 @@ class PassengerController extends ChangeNotifier {
 
   RideModel? _activeRide;
   StreamSubscription<RideModel>? _rideSubscription;
+  StreamSubscription<LatLng?>? _driverLocationSub;
+  StreamSubscription<Position>? _gpsSubscription;
+  StreamSubscription<List<Map<String, dynamic>>>? _onlineDriversSub;
+
+  LatLng? _assignedDriverLocation;
+  List<Map<String, dynamic>> _onlineDrivers = [];
   List<String> _favoriteDriverIds = [];
   List<RideModel> _rideHistory = [];
   
@@ -60,6 +66,8 @@ class PassengerController extends ChangeNotifier {
   String get homeAddress => _homeAddress;
   String get workAddress => _workAddress;
   RideModel? get activeRide => _activeRide;
+  LatLng? get assignedDriverLocation => _assignedDriverLocation;
+  List<Map<String, dynamic>> get onlineDrivers => _onlineDrivers;
   List<String> get favoriteDriverIds => _favoriteDriverIds;
   List<RideModel> get rideHistory => _rideHistory;
   bool get isLoading => _isLoading;
@@ -76,7 +84,24 @@ class PassengerController extends ChangeNotifier {
     notifyListeners();
 
     try {
+      // 1. Obtém GPS real do dispositivo
       _currentLocation = await LocationService.getCurrentLocation();
+      _originAddress = 'Sua Localização GPS';
+
+      // 2. Inicia rastreamento contínuo do GPS real
+      _gpsSubscription?.cancel();
+      _gpsSubscription = LocationService.getPositionStream().listen((pos) {
+        _currentLocation = LatLng(pos.latitude, pos.longitude);
+        notifyListeners();
+      });
+
+      // 3. Escuta em Realtime todos os motoristas reais online no Supabase
+      _onlineDriversSub?.cancel();
+      _onlineDriversSub = _supabaseService.streamOnlineDriverLocations().listen((driversList) {
+        _onlineDrivers = driversList;
+        notifyListeners();
+      });
+
       _favoriteDriverIds = await _supabaseService.getFavoriteDriverIds(passengerId);
       _rideHistory = await _supabaseService.getRideHistory(passengerId, isDriver: false);
     } catch (_) {
@@ -141,7 +166,7 @@ class PassengerController extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------------------
-  // SOLICITAÇÃO DE CORRIDA COM REGRA DE PRIORIDADE PARA FAVORITOS (15s)
+  // SOLICITAÇÃO DE CORRIDA REAL
   // ---------------------------------------------------------------------------
   Future<void> requestRide(String passengerId) async {
     if (_destinationLocation == null || _destinationAddress == null) return;
@@ -171,7 +196,7 @@ class PassengerController extends ChangeNotifier {
     _activeRide = await _supabaseService.requestRide(newRide);
     notifyListeners();
 
-    // Inicia contador regressivo dos 15 segundos de prioridade para motoristas favoritos
+    // Contador regressivo dos 15s de prioridade
     _priorityTimer?.cancel();
     _priorityTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (_prioritySecondsRemaining > 0) {
@@ -187,34 +212,23 @@ class PassengerController extends ChangeNotifier {
     _rideSubscription?.cancel();
     _rideSubscription = _supabaseService.streamRide(_activeRide!.id).listen((updatedRide) {
       _activeRide = updatedRide;
-      if (updatedRide.status == 'accepted') {
+      if (updatedRide.status == 'accepted' || updatedRide.status == 'arrived' || updatedRide.status == 'in_progress') {
         _priorityTimer?.cancel();
         _isRequestingRide = false;
+
+        // Se houver um motorista vinculado, escuta a localização dele em tempo real
+        if (updatedRide.driverId != null) {
+          _driverLocationSub?.cancel();
+          _driverLocationSub = _supabaseService.streamDriverLocation(updatedRide.driverId!).listen((driverPos) {
+            if (driverPos != null) {
+              _assignedDriverLocation = driverPos;
+              notifyListeners();
+            }
+          });
+        }
       }
       notifyListeners();
     });
-
-    // Simulação caso nenhum motorista aceite imediatamente em ambiente offline de teste
-    if (!_supabaseService.isLive) {
-      Future.delayed(const Duration(seconds: 4), () {
-        if (_activeRide != null && _activeRide!.isRequested) {
-          final mockDriver = DriverModel(
-            id: 'mock-driver-1',
-            fullName: 'Marcos Silva',
-            phone: '(11) 99887-1122',
-            avatarUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150',
-            cnhNumber: '12345678900',
-            vehicleModel: 'Toyota Corolla 2.0',
-            vehiclePlate: 'BRA2E19',
-            vehicleColor: 'Prata',
-            vehicleYear: '2023',
-            ratingAvg: 4.94,
-            lastBilledAt: DateTime.now(),
-          );
-          _supabaseService.acceptRide(_activeRide!.id, mockDriver);
-        }
-      });
-    }
   }
 
   Future<void> cancelRide() async {
@@ -222,6 +236,8 @@ class PassengerController extends ChangeNotifier {
       await _supabaseService.updateRideStatus(_activeRide!.id, 'cancelled');
     }
     _priorityTimer?.cancel();
+    _driverLocationSub?.cancel();
+    _assignedDriverLocation = null;
     _isRequestingRide = false;
     _activeRide = null;
     notifyListeners();
@@ -243,7 +259,13 @@ class PassengerController extends ChangeNotifier {
     String? comment,
     bool addToFavorites = false,
   }) async {
-    if (_activeRide != null && _activeRide!.driverId != null) {
+    if (_activeRide == null) return;
+
+    if (addToFavorites && _activeRide!.driverId != null) {
+      await toggleFavorite(passengerId, _activeRide!.driverId!);
+    }
+
+    if (_activeRide!.driverId != null) {
       await _supabaseService.submitRating(
         rideId: _activeRide!.id,
         passengerId: passengerId,
@@ -251,17 +273,13 @@ class PassengerController extends ChangeNotifier {
         score: score,
         comment: comment,
       );
-
-      if (addToFavorites) {
-        await toggleFavorite(passengerId, _activeRide!.driverId!);
-      }
     }
 
     _activeRide = null;
     _destinationAddress = null;
     _destinationLocation = null;
-    _priorityTimer?.cancel();
-    _rideSubscription?.cancel();
+    _driverLocationSub?.cancel();
+    _assignedDriverLocation = null;
     notifyListeners();
   }
 
@@ -269,6 +287,9 @@ class PassengerController extends ChangeNotifier {
   void dispose() {
     _priorityTimer?.cancel();
     _rideSubscription?.cancel();
+    _driverLocationSub?.cancel();
+    _gpsSubscription?.cancel();
+    _onlineDriversSub?.cancel();
     super.dispose();
   }
 }

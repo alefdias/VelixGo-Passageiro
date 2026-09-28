@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../constants/app_constants.dart';
 import '../models/user_profile.dart';
@@ -51,7 +51,7 @@ class SupabaseService {
       email: 'carlos@velixgo.com.br',
       phone: '(11) 98765-4321',
       avatarUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150',
-      role: 'unselected',
+      role: 'passenger',
       createdAt: DateTime.now(),
     );
 
@@ -93,17 +93,44 @@ class SupabaseService {
   // ---------------------------------------------------------------------------
 
   Future<UserProfile?> getCurrentUser() async {
-    if (_isLive && client.auth.currentUser != null) {
+    if (_isLive) {
+      final user = client.auth.currentUser;
+      if (user == null) {
+        return null;
+      }
+
+      final name = user.userMetadata?['full_name'] as String? ??
+          user.userMetadata?['name'] as String? ??
+          user.email?.split('@').first ??
+          'Passageiro';
+      final avatar = user.userMetadata?['avatar_url'] as String? ??
+          user.userMetadata?['picture'] as String?;
+
+      final realProfile = UserProfile(
+        id: user.id,
+        fullName: name,
+        email: user.email ?? '',
+        phone: user.phone ?? '',
+        avatarUrl: avatar,
+        role: 'passenger',
+        createdAt: DateTime.now(),
+      );
+
+      // Sincroniza o perfil real no banco do Supabase
       try {
-        final data = await client
-            .from('profiles')
-            .select()
-            .eq('id', client.auth.currentUser!.id)
-            .maybeSingle();
-        if (data != null) {
-          return UserProfile.fromJson(data);
-        }
-      } catch (_) {}
+        await client.from('profiles').upsert({
+          'id': user.id,
+          'full_name': name,
+          'email': user.email,
+          'avatar_url': avatar,
+          'role': 'passenger',
+          'updated_at': DateTime.now().toIso8601String(),
+        });
+      } catch (e) {
+        debugPrint('Erro ao sincronizar profile com Supabase: $e');
+      }
+
+      return realProfile;
     }
     return _mockCurrentUser;
   }
@@ -120,11 +147,11 @@ class SupabaseService {
     }
 
     _mockCurrentUser = UserProfile(
-      id: 'mock-user-1',
-      fullName: 'Carlos Mendes',
+      id: '00000000-0000-0000-0000-000000000001',
+      fullName: email.split('@').first,
       email: email,
       phone: '(11) 98765-4321',
-      role: 'unselected',
+      role: 'passenger',
       createdAt: DateTime.now(),
     );
     return _mockCurrentUser!;
@@ -136,7 +163,7 @@ class SupabaseService {
         final res = await client.auth.signUp(
           email: email,
           password: password,
-          data: {'full_name': name, 'role': 'unselected'},
+          data: {'full_name': name, 'role': 'passenger'},
         );
         if (res.user != null) {
           return UserProfile(
@@ -144,7 +171,7 @@ class SupabaseService {
             fullName: name,
             email: email,
             phone: '',
-            role: 'unselected',
+            role: 'passenger',
             createdAt: DateTime.now(),
           );
         }
@@ -152,49 +179,34 @@ class SupabaseService {
     }
 
     _mockCurrentUser = UserProfile(
-      id: 'mock-user-${DateTime.now().millisecondsSinceEpoch}',
+      id: '00000000-0000-0000-0000-000000000001',
       fullName: name,
       email: email,
       phone: '',
-      role: 'unselected',
+      role: 'passenger',
       createdAt: DateTime.now(),
     );
     return _mockCurrentUser!;
   }
 
-  Future<UserProfile> signInSocial(String provider, {String redirectScheme = 'com.velixgo.passenger'}) async {
+  Future<bool> signInSocial(String provider, {String redirectScheme = 'com.velixgo.passenger'}) async {
     if (_isLive) {
       try {
         final oAuthProvider = provider.toLowerCase() == 'google'
             ? OAuthProvider.google
             : OAuthProvider.apple;
 
-        await client.auth.signInWithOAuth(
+        return await client.auth.signInWithOAuth(
           oAuthProvider,
           redirectTo: '$redirectScheme://login-callback',
+          authScreenLaunchMode: LaunchMode.externalApplication,
         );
-
-        if (client.auth.currentUser != null) {
-          final profile = await getCurrentUser();
-          if (profile != null) return profile;
-        }
       } catch (e) {
-        debugPrint('Erro OAuth $provider: $e');
+        debugPrint('Erro ao iniciar OAuth $provider: $e');
+        return false;
       }
     }
-
-    _mockCurrentUser = UserProfile(
-      id: client.auth.currentUser?.id ?? 'user-social-${provider.toLowerCase()}',
-      fullName: client.auth.currentUser?.userMetadata?['full_name'] ?? (provider == 'Google' ? 'Alexandre Gomes' : 'Juliana Ramos'),
-      email: client.auth.currentUser?.email ?? '${provider.toLowerCase()}.user@velixgo.com.br',
-      phone: '(11) 97123-9988',
-      avatarUrl: client.auth.currentUser?.userMetadata?['avatar_url'] ?? (provider == 'Google' 
-          ? 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150'
-          : 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150'),
-      role: 'unselected',
-      createdAt: DateTime.now(),
-    );
-    return _mockCurrentUser!;
+    return false;
   }
 
   Future<void> updateRole(String role) async {
@@ -277,8 +289,15 @@ class SupabaseService {
     final rideWithPriority = RideModel(
       id: ride.id.isEmpty ? 'ride-${DateTime.now().millisecondsSinceEpoch}' : ride.id,
       passengerId: ride.passengerId,
-      passengerName: _mockCurrentUser?.fullName ?? 'Carlos Mendes',
-      passengerPhone: _mockCurrentUser?.phone ?? '(11) 98765-4321',
+      passengerName: ride.passengerName?.isNotEmpty == true
+          ? ride.passengerName
+          : (client.auth.currentUser?.userMetadata?['full_name'] as String? ??
+              client.auth.currentUser?.email?.split('@').first ??
+              _mockCurrentUser?.fullName ??
+              'Passageiro'),
+      passengerPhone: ride.passengerPhone?.isNotEmpty == true
+          ? ride.passengerPhone
+          : (client.auth.currentUser?.phone ?? _mockCurrentUser?.phone ?? ''),
       status: 'requested',
       originAddress: ride.originAddress,
       originLat: ride.originLat,
@@ -318,6 +337,34 @@ class SupabaseService {
           .map((rows) => RideModel.fromJson(rows.first));
     }
     return _activeRideController.stream.where((r) => r.id == rideId);
+  }
+
+  Stream<List<Map<String, dynamic>>> streamOnlineDriverLocations() {
+    if (_isLive) {
+      return client
+          .from('driver_locations')
+          .stream(primaryKey: ['driver_id'])
+          .map((rows) => rows);
+    }
+    return Stream.value([]);
+  }
+
+  Stream<LatLng?> streamDriverLocation(String driverId) {
+    if (_isLive) {
+      return client
+          .from('driver_locations')
+          .stream(primaryKey: ['driver_id'])
+          .eq('driver_id', driverId)
+          .map((rows) {
+            if (rows.isEmpty) return null;
+            final r = rows.first;
+            return LatLng(
+              (r['latitude'] as num).toDouble(),
+              (r['longitude'] as num).toDouble(),
+            );
+          });
+    }
+    return const Stream.empty();
   }
 
   Future<void> submitRating({

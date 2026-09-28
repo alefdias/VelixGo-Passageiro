@@ -61,14 +61,26 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _submitSocial(String provider) async {
     final auth = Provider.of<AuthController>(context, listen: false);
     final ok = await auth.loginWithSocial(provider);
-    if (ok && mounted) {
-      _onSuccessRedirect();
+    if (!ok && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(auth.errorMessage ?? 'Não foi possível iniciar o login com $provider.'),
+          backgroundColor: AppColors.red,
+        ),
+      );
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final auth = Provider.of<AuthController>(context);
+
+    // Redireciona automaticamente quando autenticado com o Google
+    if (auth.isAuthenticated) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _onSuccessRedirect();
+      });
+    }
 
     return Scaffold(
       backgroundColor: Colors.white,
@@ -90,13 +102,34 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: const Icon(Icons.navigation_rounded, color: Colors.white, size: 28),
                   ),
                   const SizedBox(width: 12),
-                  const Text(
-                    'Velix Go',
-                    style: TextStyle(
-                      fontSize: 24,
-                      fontWeight: FontWeight.w800,
-                      color: AppColors.black,
-                    ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Velix Go',
+                        style: TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.black,
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: AppColors.blue.withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Text(
+                          'PASSAGEIRO',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: AppColors.blue,
+                            letterSpacing: 1.2,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
