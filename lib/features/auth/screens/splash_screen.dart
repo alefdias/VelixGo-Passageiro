@@ -79,11 +79,12 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                   width: 90,
                   height: 90,
                   decoration: BoxDecoration(
-                    color: AppColors.blue,
+                    color: const Color(0xFF1E293B),
                     borderRadius: BorderRadius.circular(24),
+                    border: Border.all(color: Colors.white24, width: 1.5),
                     boxShadow: [
                       BoxShadow(
-                        color: AppColors.blue.withOpacity(0.4),
+                        color: Colors.black.withOpacity(0.5),
                         blurRadius: 24,
                         offset: const Offset(0, 8),
                       ),
@@ -118,32 +119,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                     ],
                   ),
                 ),
-                const SizedBox(height: 12),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
-                  decoration: BoxDecoration(
-                    color: AppColors.blue.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(color: AppColors.blue, width: 1.5),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.person_pin_circle_rounded, color: AppColors.blue, size: 16),
-                      SizedBox(width: 6),
-                      Text(
-                        'PASSAGEIRO',
-                        style: TextStyle(
-                          color: AppColors.blue,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 12,
-                          letterSpacing: 1.5,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 const Text(
                   'Mobilidade Urbana Rápida & Justa',
                   style: TextStyle(
@@ -158,7 +134,7 @@ class _SplashScreenState extends State<SplashScreen> with SingleTickerProviderSt
                   height: 24,
                   child: CircularProgressIndicator(
                     strokeWidth: 2.5,
-                    color: AppColors.blue,
+                    color: Colors.white,
                   ),
                 ),
               ],
