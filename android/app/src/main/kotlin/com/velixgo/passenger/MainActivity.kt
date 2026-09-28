@@ -1,4 +1,4 @@
-package com.velixgo.velix_go
+package com.velixgo.passenger
 
 import io.flutter.embedding.android.FlutterActivity
 
