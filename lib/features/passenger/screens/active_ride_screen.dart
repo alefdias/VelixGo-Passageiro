@@ -3,6 +3,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../core/constants/app_colors.dart';
+import '../../../core/services/routing_service.dart';
 import '../../../core/utils/formatters.dart';
 import '../../../core/utils/geo_utils.dart';
 import '../../../core/widgets/velix_map.dart';
@@ -18,6 +19,25 @@ class ActiveRideScreen extends StatefulWidget {
 }
 
 class _ActiveRideScreenState extends State<ActiveRideScreen> {
+  List<LatLng>? _dynamicRoutePoints;
+  List<RouteInstruction> _dynamicInstructions = [];
+  bool _is3DNavigation = false;
+  String _lastRouteKey = '';
+  void _updateRouteIfNeeded(LatLng from, LatLng to) {
+    final key = '${from.latitude.toStringAsFixed(4)},${from.longitude.toStringAsFixed(4)}-${to.latitude.toStringAsFixed(4)},${to.longitude.toStringAsFixed(4)}';
+    if (_lastRouteKey == key) return;
+    _lastRouteKey = key;
+
+    RoutingService.getDrivingRoute(from, to).then((res) {
+      if (mounted) {
+        setState(() {
+          _dynamicRoutePoints = res.points;
+          _dynamicInstructions = res.instructions;
+        });
+      }
+    }).catchError((_) {});
+  }
+
   void _callDriver(String? phone) async {
     if (phone == null || phone.isEmpty) return;
     final cleanPhone = phone.replaceAll(RegExp(r'[^0-9]'), '');
@@ -118,27 +138,90 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
       );
     }
 
-    // Traça rota: Se motorista a caminho, traça motorista -> passageiro. Se em viagem, traça passageiro -> destino
-    List<LatLng>? routePoints;
-    if (driverPos != null && (ride?.status == 'accepted' || ride?.status == 'arrived')) {
-      routePoints = GeoUtils.createRoutePolyline(driverPos, origin);
-    } else {
-      routePoints = GeoUtils.createRoutePolyline(origin, destination);
-    }
+    // Traça rota real: Se motorista a caminho, traça motorista -> passageiro. Se em viagem, traça passageiro -> destino
+    final LatLng routeOrigin = (driverPos != null && (ride?.status == 'accepted' || ride?.status == 'arrived'))
+        ? driverPos
+        : origin;
+    final LatLng routeTarget = (driverPos != null && (ride?.status == 'accepted' || ride?.status == 'arrived'))
+        ? origin
+        : destination;
+
+    _updateRouteIfNeeded(routeOrigin, routeTarget);
+
+    final routePoints = _dynamicRoutePoints ??
+        (passenger.routePoints.isNotEmpty ? passenger.routePoints : GeoUtils.createRoutePolyline(routeOrigin, routeTarget));
+
+    final bool inTrip = ride?.status == 'in_progress';
 
     return Scaffold(
       backgroundColor: Colors.white,
       body: Stack(
         children: [
-          // Velix Map
+          // Velix Map com suporte a Navegação 3D
           VelixMap(
             center: driverPos ?? origin,
-            initialZoom: 15.0,
+            initialZoom: inTrip ? 17.5 : 15.5,
             markers: markers,
             routePoints: routePoints,
             showRecenterButton: true,
+            initial3DMode: _is3DNavigation || inTrip,
+            heading: inTrip ? 45.0 : 0.0,
+            onToggle3D: (val) => setState(() => _is3DNavigation = val),
             padding: const EdgeInsets.only(bottom: 300),
           ),
+
+          // Banner Superior GPS Turn-by-Turn em Modo Navegação
+          if (_dynamicInstructions.isNotEmpty && (inTrip || ride?.status == 'accepted'))
+            Positioned(
+              top: MediaQuery.of(context).padding.top + 60,
+              left: 16,
+              right: 16,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: AppColors.black.withOpacity(0.92),
+                  borderRadius: BorderRadius.circular(16),
+                  boxShadow: const [
+                    BoxShadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 4)),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        color: AppColors.blue.withOpacity(0.2),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.navigation_rounded, color: AppColors.blue, size: 20),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            _dynamicInstructions.first.instruction,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            'Trajeto guiado por GPS em tempo real',
+                            style: const TextStyle(color: Colors.white70, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
 
           // Botão Superior Voltar / Cancelar
           SafeArea(

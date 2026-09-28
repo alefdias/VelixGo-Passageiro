@@ -6,6 +6,7 @@ import '../../../core/constants/app_constants.dart';
 import '../../../core/models/ride_model.dart';
 import '../../../core/services/location_service.dart';
 import '../../../core/services/supabase_service.dart';
+import '../../../core/services/routing_service.dart';
 import '../../../core/utils/geo_utils.dart';
 
 class PassengerController extends ChangeNotifier {
@@ -49,7 +50,14 @@ class PassengerController extends ChangeNotifier {
   int _prioritySecondsRemaining = 15;
   Timer? _priorityTimer;
 
+  List<LatLng> _routePoints = [];
+  List<RouteInstruction> _routeInstructions = [];
+  bool _isCalculatingRoute = false;
+
   // Getters
+  List<LatLng> get routePoints => _routePoints;
+  List<RouteInstruction> get routeInstructions => _routeInstructions;
+  bool get isCalculatingRoute => _isCalculatingRoute;
   LatLng get currentLocation => _currentLocation;
   String get originAddress => _originAddress;
   String? get destinationAddress => _destinationAddress;
@@ -116,21 +124,42 @@ class PassengerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setDestination(String address, LatLng location) {
+  Future<void> setDestination(String address, LatLng location) async {
     _destinationAddress = address;
     _destinationLocation = location;
+    _isCalculatingRoute = true;
 
+    // Estimativa inicial rápida em linha reta enquanto a API de ruas responde
     _distanceKm = GeoUtils.calculateDistance(_currentLocation, location);
     _estimatedDurationMoto = GeoUtils.estimateDurationMinutes(_distanceKm, vehicleType: 'motorcycle');
     _estimatedDurationCar = GeoUtils.estimateDurationMinutes(_distanceKm, vehicleType: 'car');
-    
     _estimatedFareMoto = GeoUtils.calculateEstimatedFare(_distanceKm, _estimatedDurationMoto, vehicleType: 'motorcycle');
     _estimatedFareCar = GeoUtils.calculateEstimatedFare(_distanceKm, _estimatedDurationCar, vehicleType: 'car');
-
     _estimatedDurationMin = _selectedVehicleType == 'motorcycle' ? _estimatedDurationMoto : _estimatedDurationCar;
     _estimatedFare = _selectedVehicleType == 'motorcycle' ? _estimatedFareMoto : _estimatedFareCar;
-
     notifyListeners();
+
+    // Rota real pelas ruas e avenidas via OSRM
+    try {
+      final result = await RoutingService.getDrivingRoute(_currentLocation, location);
+      _routePoints = result.points;
+      _routeInstructions = result.instructions;
+      _distanceKm = result.distanceKm;
+
+      _estimatedDurationCar = result.durationMinutes;
+      _estimatedDurationMoto = (result.durationMinutes * 0.75).ceil();
+      if (_estimatedDurationMoto < 1) _estimatedDurationMoto = 1;
+
+      _estimatedFareMoto = GeoUtils.calculateEstimatedFare(_distanceKm, _estimatedDurationMoto, vehicleType: 'motorcycle');
+      _estimatedFareCar = GeoUtils.calculateEstimatedFare(_distanceKm, _estimatedDurationCar, vehicleType: 'car');
+      _estimatedDurationMin = _selectedVehicleType == 'motorcycle' ? _estimatedDurationMoto : _estimatedDurationCar;
+      _estimatedFare = _selectedVehicleType == 'motorcycle' ? _estimatedFareMoto : _estimatedFareCar;
+    } catch (_) {
+      _routePoints = GeoUtils.createRoutePolyline(_currentLocation, location);
+    } finally {
+      _isCalculatingRoute = false;
+      notifyListeners();
+    }
   }
 
   void setVehicleType(String type) {
