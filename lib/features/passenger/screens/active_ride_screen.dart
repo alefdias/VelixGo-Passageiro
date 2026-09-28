@@ -324,18 +324,17 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
                               Text(
                                 passenger.prioritySecondsRemaining > 0
                                     ? '❤️ Notificando Motoristas Favoritos'
-                                    : 'Buscando motoristas próximos...',
+                                    : 'Notificando ${passenger.selectedVehicleType == 'motorcycle' ? 'motos' : 'carros'} mais próximos...',
                                 style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w700,
-                                  color: AppColors.black,
-                                ),
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppColors.black),
                               ),
                               const SizedBox(height: 4),
                               Text(
                                 passenger.prioritySecondsRemaining > 0
                                     ? 'Seus motoristas favoritos têm prioridade de ${passenger.prioritySecondsRemaining}s'
-                                    : 'Aguardando confirmação do motorista parceiro',
+                                    : 'Veículo mais próximo a ~${passenger.closestEtaMinutes} min do seu local. Aguardando aceite...',
                                 style: const TextStyle(fontSize: 13, color: AppColors.grey),
                               ),
                             ],

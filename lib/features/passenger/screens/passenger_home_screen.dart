@@ -45,8 +45,8 @@ class _PassengerHomeScreenState extends State<PassengerHomeScreen> {
       ),
     );
 
-    // 2. Motoristas Reais Online
-    for (final driverData in passenger.onlineDrivers) {
+    // 2. Veículos Trabalhando em Tempo Real (Carros e Motos)
+    for (final driverData in passenger.allNearbyVehicles) {
       final lat = (driverData['latitude'] as num?)?.toDouble();
       final lng = (driverData['longitude'] as num?)?.toDouble();
       final heading = (driverData['heading'] as num?)?.toDouble() ?? 0.0;
@@ -68,16 +68,18 @@ class _PassengerHomeScreenState extends State<PassengerHomeScreen> {
       drawer: _buildDrawer(context, auth, passenger),
       body: Stack(
         children: [
-          // Velix Map (OpenStreetMap / CartoDB Voyager em tempo real)
+          // Velix Map (OpenStreetMap em tempo real com modo 3D e noturno)
           VelixMap(
             center: passenger.currentLocation,
             initialZoom: 15.5,
             markers: markers,
             showRecenterButton: true,
+            show3DToggle: true,
+            showDarkModeToggle: true,
             padding: const EdgeInsets.only(bottom: 240),
           ),
 
-          // Barra Superior com Menu e Botão de Alternar Perfil
+          // Barra Superior com Menu e Perfil
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -128,6 +130,46 @@ class _PassengerHomeScreenState extends State<PassengerHomeScreen> {
                     ),
                   ),
                 ],
+              ),
+            ),
+          ),
+
+          // Badge Dinâmico com Frota Trabalhando em Tempo Real (Estilo Uber)
+          Positioned(
+            top: MediaQuery.of(context).padding.top + 60,
+            left: 16,
+            right: 16,
+            child: Material(
+              elevation: 4,
+              borderRadius: BorderRadius.circular(20),
+              color: Colors.white.withOpacity(0.96),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 9,
+                      height: 9,
+                      decoration: const BoxDecoration(
+                        color: AppColors.green,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        '🟢 ${passenger.onlineCarsCount} carros e ${passenger.onlineMotosCount} motos ativos • Mais próximo a ~${passenger.closestEtaMinutes} min',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                          color: AppColors.black,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
