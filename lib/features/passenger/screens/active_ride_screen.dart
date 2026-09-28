@@ -124,15 +124,13 @@ class _ActiveRideScreenState extends State<ActiveRideScreen> {
     );
 
     // Posição REAL do Motorista (Streaming do Supabase)
-    LatLng? driverPos;
-    if (ride != null && !ride.isRequested) {
-      driverPos = passenger.assignedDriverLocation ?? LatLng(origin.latitude + 0.003, origin.longitude + 0.002);
+    final LatLng? driverPos = passenger.assignedDriverLocation;
+    if (ride != null && !ride.isRequested && driverPos != null) {
       markers.add(
         VelixMapMarker(
           point: driverPos,
           child: DriverVehicleMarker(
             vehicleType: ride.vehicleType,
-            label: ride.driverName ?? 'Motorista Parceiro',
           ),
         ),
       );

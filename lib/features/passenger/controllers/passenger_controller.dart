@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
@@ -55,9 +54,6 @@ class PassengerController extends ChangeNotifier {
   List<RouteInstruction> _routeInstructions = [];
   bool _isCalculatingRoute = false;
 
-  List<Map<String, dynamic>> _ambientVehicles = [];
-  Timer? _ambientMovementTimer;
-
   // Getters
   List<LatLng> get routePoints => _routePoints;
   List<RouteInstruction> get routeInstructions => _routeInstructions;
@@ -81,24 +77,16 @@ class PassengerController extends ChangeNotifier {
   LatLng? get assignedDriverLocation => _assignedDriverLocation;
   List<Map<String, dynamic>> get onlineDrivers => _onlineDrivers;
 
-  // Frota ativa total (Motoristas reais do Supabase + Veículos urbanos ativos ao redor)
-  List<Map<String, dynamic>> get allNearbyVehicles {
-    if (_onlineDrivers.isNotEmpty) {
-      final realDriverIds = _onlineDrivers.map((d) => d['driver_id']).toSet();
-      final filteredAmbient = _ambientVehicles.where((a) => !realDriverIds.contains(a['driver_id'])).toList();
-      return [..._onlineDrivers, ...filteredAmbient];
-    }
-    return _ambientVehicles;
-  }
+  // Frota ativa total (Apenas motoristas reais do Supabase)
+  List<Map<String, dynamic>> get allNearbyVehicles => _onlineDrivers;
 
-  int get onlineCarsCount => allNearbyVehicles.where((v) => (v['vehicle_type'] ?? 'car') == 'car').length;
-  int get onlineMotosCount => allNearbyVehicles.where((v) => (v['vehicle_type'] ?? 'car') == 'motorcycle').length;
+  int get onlineCarsCount => _onlineDrivers.where((v) => (v['vehicle_type'] ?? 'car') == 'car').length;
+  int get onlineMotosCount => _onlineDrivers.where((v) => (v['vehicle_type'] ?? 'car') == 'motorcycle').length;
 
-  int get closestEtaMinutes {
-    final list = allNearbyVehicles;
-    if (list.isEmpty) return 3;
+  int? get closestEtaMinutes {
+    if (_onlineDrivers.isEmpty) return null;
     double minDistance = double.infinity;
-    for (final v in list) {
+    for (final v in _onlineDrivers) {
       final lat = (v['latitude'] as num?)?.toDouble();
       final lng = (v['longitude'] as num?)?.toDouble();
       if (lat != null && lng != null) {
@@ -106,13 +94,13 @@ class PassengerController extends ChangeNotifier {
         if (d < minDistance) minDistance = d;
       }
     }
-    if (minDistance == double.infinity) return 3;
+    if (minDistance == double.infinity) return null;
     final eta = (minDistance * 2.5).round();
     return eta < 1 ? 1 : (eta > 15 ? 15 : eta);
   }
 
   Map<String, dynamic>? getClosestDriver(String vehicleType) {
-    final list = allNearbyVehicles.where((v) => (v['vehicle_type'] ?? 'car') == vehicleType).toList();
+    final list = _onlineDrivers.where((v) => (v['vehicle_type'] ?? 'car') == vehicleType).toList();
     if (list.isEmpty) return null;
     Map<String, dynamic>? closest;
     double minDistance = double.infinity;
@@ -166,10 +154,6 @@ class PassengerController extends ChangeNotifier {
 
       _favoriteDriverIds = await _supabaseService.getFavoriteDriverIds(passengerId);
       _rideHistory = await _supabaseService.getRideHistory(passengerId, isDriver: false);
-
-      // 4. Inicializa e movimenta frota urbana ativa ao redor do passageiro
-      _initAmbientVehicles(_currentLocation);
-      _startAmbientMovement();
     } catch (_) {
     } finally {
       _isLoading = false;
@@ -370,93 +354,8 @@ class PassengerController extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _initAmbientVehicles(LatLng center) {
-    _ambientVehicles = [
-      {
-        'driver_id': 'ambient-car-1',
-        'full_name': 'Carro Parceiro • Onix Branco',
-        'latitude': center.latitude + 0.0032,
-        'longitude': center.longitude + 0.0028,
-        'heading': 45.0,
-        'vehicle_type': 'car',
-      },
-      {
-        'driver_id': 'ambient-moto-1',
-        'full_name': 'Moto Parceira • Honda CG 160',
-        'latitude': center.latitude - 0.0022,
-        'longitude': center.longitude - 0.0025,
-        'heading': 135.0,
-        'vehicle_type': 'motorcycle',
-      },
-      {
-        'driver_id': 'ambient-car-2',
-        'full_name': 'Carro Parceiro • HB20 Prata',
-        'latitude': center.latitude - 0.0041,
-        'longitude': center.longitude + 0.0035,
-        'heading': 270.0,
-        'vehicle_type': 'car',
-      },
-      {
-        'driver_id': 'ambient-moto-2',
-        'full_name': 'Moto Parceira • Yamaha Fazer',
-        'latitude': center.latitude + 0.0025,
-        'longitude': center.longitude - 0.0038,
-        'heading': 180.0,
-        'vehicle_type': 'motorcycle',
-      },
-      {
-        'driver_id': 'ambient-car-3',
-        'full_name': 'Carro Parceiro • Argo Cinza',
-        'latitude': center.latitude + 0.0045,
-        'longitude': center.longitude - 0.0015,
-        'heading': 90.0,
-        'vehicle_type': 'car',
-      },
-    ];
-  }
-
-  void _startAmbientMovement() {
-    _ambientMovementTimer?.cancel();
-    _ambientMovementTimer = Timer.periodic(const Duration(seconds: 3), (timer) {
-      if (_ambientVehicles.isEmpty) return;
-
-      for (int i = 0; i < _ambientVehicles.length; i++) {
-        final v = _ambientVehicles[i];
-        double lat = (v['latitude'] as double);
-        double lng = (v['longitude'] as double);
-        double heading = (v['heading'] as double);
-
-        // Movimento suave simulando deslocamento de rua
-        final rad = heading * (3.141592653589793 / 180);
-        const double step = 0.00018; // ~20 metros
-        lat += math.cos(rad) * step;
-        lng += math.sin(rad) * step;
-
-        // Se afastar mais de 1.8 km do passageiro, reposiciona perto em outra direção
-        final dist = GeoUtils.calculateDistance(_currentLocation, LatLng(lat, lng));
-        if (dist > 1.8) {
-          lat = _currentLocation.latitude + (math.Random().nextDouble() - 0.5) * 0.006;
-          lng = _currentLocation.longitude + (math.Random().nextDouble() - 0.5) * 0.006;
-          heading = math.Random().nextDouble() * 360;
-        }
-
-        // Leve rotação de curvas de rua
-        heading = (heading + (math.Random().nextDouble() * 16 - 8)) % 360;
-
-        _ambientVehicles[i] = {
-          ...v,
-          'latitude': lat,
-          'longitude': lng,
-          'heading': heading,
-        };
-      }
-      notifyListeners();
-    });
-  }
-
   @override
   void dispose() {
-    _ambientMovementTimer?.cancel();
     _priorityTimer?.cancel();
     _rideSubscription?.cancel();
     _driverLocationSub?.cancel();

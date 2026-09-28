@@ -45,8 +45,8 @@ class _PassengerHomeScreenState extends State<PassengerHomeScreen> {
       ),
     );
 
-    // 2. Veículos Trabalhando em Tempo Real (Carros e Motos)
-    for (final driverData in passenger.allNearbyVehicles) {
+    // 2. Veículos Reais Online no Supabase (Carros e Motos)
+    for (final driverData in passenger.onlineDrivers) {
       final lat = (driverData['latitude'] as num?)?.toDouble();
       final lng = (driverData['longitude'] as num?)?.toDouble();
       final heading = (driverData['heading'] as num?)?.toDouble() ?? 0.0;
@@ -56,7 +56,6 @@ class _PassengerHomeScreenState extends State<PassengerHomeScreen> {
             point: LatLng(lat, lng),
             child: DriverVehicleMarker(
               vehicleType: driverData['vehicle_type'] ?? 'car',
-              label: driverData['full_name'] ?? 'Motorista Parceiro',
               heading: heading,
             ),
           ),
@@ -134,7 +133,7 @@ class _PassengerHomeScreenState extends State<PassengerHomeScreen> {
             ),
           ),
 
-          // Badge Dinâmico com Frota Trabalhando em Tempo Real (Estilo Uber)
+          // Badge de Frota em Tempo Real (Apenas Motoristas Reais Online)
           Positioned(
             top: MediaQuery.of(context).padding.top + 60,
             left: 16,
@@ -150,15 +149,17 @@ class _PassengerHomeScreenState extends State<PassengerHomeScreen> {
                     Container(
                       width: 9,
                       height: 9,
-                      decoration: const BoxDecoration(
-                        color: AppColors.green,
+                      decoration: BoxDecoration(
+                        color: passenger.onlineDrivers.isNotEmpty ? AppColors.green : Colors.grey,
                         shape: BoxShape.circle,
                       ),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        '🟢 ${passenger.onlineCarsCount} carros e ${passenger.onlineMotosCount} motos ativos • Mais próximo a ~${passenger.closestEtaMinutes} min',
+                        passenger.onlineDrivers.isNotEmpty
+                            ? '🟢 ${passenger.onlineCarsCount} carro(s) e ${passenger.onlineMotosCount} moto(s) online${passenger.closestEtaMinutes != null ? ' • Mais próximo ~${passenger.closestEtaMinutes} min' : ''}'
+                            : 'Nenhum motorista online no momento',
                         style: const TextStyle(
                           fontWeight: FontWeight.w700,
                           fontSize: 12,
